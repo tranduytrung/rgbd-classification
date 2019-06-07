@@ -1,0 +1,28 @@
+# CUDA
+cuda_devices: '0'   # multi-gpu training is available
+
+# dataset
+data_root:
+  train: './data/train'
+  val: './data/val'
+
+# result
+ckpt_root: 'ckpt_root/'
+
+# Models
+rgb:
+  num_classes: 0
+  pretrained: true
+  refine: true
+
+depth:
+  num_classes: 0
+
+
+# train
+lr: 0.001
+momentum: 0.9
+weight_decay: 0.0005
+batch_size: 4
+max_epoch: 1
+gamma: 0.1

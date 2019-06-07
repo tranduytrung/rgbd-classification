@@ -1,0 +1,4 @@
+from .depth_loader import from_image as depth_from_image, from_exr as depth_from_exr
+from .rgb_loader import from_image as rgb_from_image
+
+__all__ = [rgb_from_image, depth_from_image, depth_from_exr]
