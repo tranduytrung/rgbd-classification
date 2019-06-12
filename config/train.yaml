@@ -18,6 +18,8 @@ rgb:
 depth:
   num_classes: 0
 
+rgbd:
+  num_classes: 0
 
 # train
 lr: 0.001
@@ -26,3 +28,4 @@ weight_decay: 0.0005
 batch_size: 4
 max_epoch: 1
 gamma: 0.1
+worker: 0

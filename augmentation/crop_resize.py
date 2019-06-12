@@ -9,10 +9,11 @@ class CenterCrop(object):
 
     @staticmethod
     def get_params(in_size, out_size):
-        w = min(in_size[1], out_size[1])
         h = min(in_size[0], out_size[0])
-        i = (in_size[1] - h) // 2
-        j = (in_size[0] - w) // 2
+        w = min(in_size[1], out_size[1])
+        
+        i = (in_size[0] - h) // 2
+        j = (in_size[1] - w) // 2
 
         return i, j, w, h
 

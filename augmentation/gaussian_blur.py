@@ -1,12 +1,12 @@
-import PIL.Image
-import PIL.ImageFilter
+import numpy as np
+from scipy.ndimage.filters import gaussian_filter
 
 class GaussianBlur(object):
-    """ apply gaussian blur to PIL image
+    """ apply gaussian blur to numpy array
     """
 
-    def __init__(self, r=3):
-        self.r = r
+    def __init__(self, signma=1):
+        self.sigma = signma
 
-    def __call__(self, pil_image):
-        return pil_image.filter(PIL.ImageFilter.GaussianBlur(self.r))
+    def __call__(self, np_array):
+        return gaussian_filter(np_array, [self.sigma, self.sigma, 0])
