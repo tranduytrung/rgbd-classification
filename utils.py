@@ -20,7 +20,7 @@ def load_last(model, ckpt_root):
     # get acc hist
     acc_hist_path = os.path.join(ckpt_root, 'acc_hist.npy')
     if os.path.isfile(acc_hist_path):
-        acc_hist = np.load(acc_hist_path)
+        acc_hist = np.load(acc_hist_path).tolist()
     else:
         acc_hist = []
     return model, last_epoch, acc_hist

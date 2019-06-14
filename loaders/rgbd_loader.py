@@ -8,14 +8,16 @@ class RGBDLoader:
     def __init__(self, mode='train'):
         self.mode = mode
         self.blur_rgb = augmentation.GaussianBlur(signma=1)
+        self.drop_channel = augmentation.DropChannel([(0,1,2), 3], -1)
         self.transform_rgb = torchvision.transforms.Compose([
+            augmentation.Brightness(minmax=(0, .2)),
             augmentation.GaussianNoise(),
             augmentation.Clamp((0.0, 1.0)),
             torchvision.transforms.Normalize(mean=[0.5, 0.5, 0.5],
                                             std=[0.5, 0.5, 0.5])
         ])
         self.transform_d = torchvision.transforms.Compose([
-            augmentation.DepthTranslate(minmax=(0, .8), exclude_gt=None),
+            augmentation.Brightness(minmax=(0, .8)),
             augmentation.GaussianNoise(std=0.05),
             augmentation.Clamp((0.15, 1.0)),
             torchvision.transforms.Normalize(mean=[0.575], std=[0.425]),
@@ -57,13 +59,16 @@ class RGBDLoader:
         # blur
         np_rgb = self.blur_rgb(np_rgb)
         # to tensor
-        t_rgb = torch.tensor(np_rgb).permute((2,0,1))
-        t_d = torch.tensor(np_d).permute((2,0,1))
+        t_rgb = torch.from_numpy(np_rgb).permute((2,0,1))
+        t_d = torch.from_numpy(np_d).permute((2,0,1))
         # transform rgb
         t_rgb = self.transform_rgb(t_rgb)
         # transform d
         t_d = self.transform_d(t_d)
 
-        # concat again and return
+        # concat again
         t_rgbd = torch.cat((t_rgb, t_d), dim=0)
+        # randomly turn off rgb or d channel
+        t_rgbd = self.drop_channel(t_rgbd)
+
         return t_rgbd

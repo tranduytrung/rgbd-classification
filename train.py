@@ -117,7 +117,7 @@ def train_depth(cfg):
     imagenet_transform_train = torchvision.transforms.Compose([
         augmentation.CropAndResize((224, 224), scale=(0.4, 1.0)),
         torchvision.transforms.ToTensor(),
-        augmentation.DepthTranslate(minmax=(0, .8), exclude_gt=None),
+        augmentation.DepthTranslate(minmax=(0, .8)),
         augmentation.GaussianNoise(std=0.005),
         augmentation.DepthUniformNoise(p=0.01, minmax=(0.15, 1.0)),
         augmentation.Clamp((0.15, 1.0)),
@@ -127,7 +127,7 @@ def train_depth(cfg):
     imagenet_transform_val = torchvision.transforms.Compose([
         augmentation.CenterCrop((224, 224)),
         torchvision.transforms.ToTensor(),
-        augmentation.DepthTranslate(minmax=(0, .8), exclude_gt=None),
+        augmentation.DepthTranslate(minmax=(0, .8)),
         augmentation.GaussianNoise(std=0.005),
         augmentation.DepthUniformNoise(p=0.01, minmax=(0.15, 1.0)),
         augmentation.Clamp((0.15, 1.0)),
@@ -235,7 +235,7 @@ def train_rgb(cfg):
 def train_rgbd(cfg):
     datasets = {
         "train": loaders.RGBDDataset(cfg['data_root']['train'], loader=loaders.RGBDLoader(mode='train')),
-        "val": loaders.RGBDDataset(cfg['data_root']['val'], loader=loaders.RGBDLoader(mode='train')),
+        "val": loaders.RGBDDataset(cfg['data_root']['val'], loader=loaders.RGBDLoader(mode='val')),
     }
 
     num_workers = cfg['worker']
