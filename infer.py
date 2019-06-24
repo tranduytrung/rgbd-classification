@@ -8,7 +8,7 @@ import PIL.ImageDraw
 import PIL.ImageFont
 import numpy as np
 import augmentation
-from models import RGBNet, DepthNet
+from models import RGBNet, DepthNet, RGBDNet
 import utils
 
 
@@ -67,6 +67,14 @@ def classify(single_in, model, transform):
 
     return preds.item()
 
+def classify_rgbd(rgb_in, d_in, transform_rgb, transform_d, model):
+    tensor_rgb = transform_rgb(rgb_in)
+    tensor_d = transform_d(d_in)
+    tensor = torch.cat((tensor_rgb, tensor_d), dim=0)
+    outputs = model(tensor.unsqueeze(0))
+    _, preds = torch.max(outputs, 1)
+
+    return preds.item()
 
 def classify_rgb_camera(ckpt_root):
     import cv2
@@ -175,12 +183,6 @@ def classify_depth_camera(ckpt_root):
         # bgr_frame = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR)
 
         depth_frame = sc.last_depth_frame()
-        # h = 224
-        # w = 224
-        # i = (depth_frame.shape[0] - h) // 2
-        # j = (depth_frame.shape[1] - w) // 2
-        # depth_frame = depth_frame[i:i+h, j:j+w]
-
         depth_frame = clip_and_fill(depth_frame, 3e2, 10e2, 'normal')
         depth_frame = depth_frame / 1e3  # milimeter to meter
         in_depth = depth_frame[:, :, None]
@@ -229,6 +231,128 @@ def classify_depth_camera(ckpt_root):
     cv2.destroyAllWindows()
     sc.stop()
 
+def init_rgbd_classifier(ckpt_root):
+    # transform
+    transform_d = torchvision.transforms.Compose([
+        augmentation.CenterCrop((224, 224)),
+        augmentation.Numpy2Tensor(),
+        augmentation.Clamp((0.15, 1.0)),
+        torchvision.transforms.Normalize(mean=[0.575], std=[0.425])
+    ])
+
+    # transform rgb
+    transform_rgb = torchvision.transforms.Compose([
+        augmentation.CenterCrop((224, 224)),
+        augmentation.Numpy2Tensor(),
+        torchvision.transforms.Normalize(mean=[0.5, 0.5, 0.5],
+                                            std=[0.5, 0.5, 0.5])
+    ])
+
+    # read classes name
+    with open(os.path.join(ckpt_root, 'classes.json'), 'rt') as f:
+        clasess = json.load(f)
+
+    model = RGBDNet({
+        'num_classes': len(clasess)
+    })
+
+    model.eval()
+
+    # enable cuda if available
+    if torch.cuda.is_available():
+        model = model.cuda()
+
+    utils.load_best(model, ckpt_root)
+
+    return model, transform_rgb, transform_d, clasess
+
+def classify_rgbd_camera(ckpt_root, h=None):
+    from structure import StructureCamera
+    import cv2
+
+    # init
+    model, transform_rgb, transform_d, clasess = init_rgbd_classifier(ckpt_root)
+
+    # setup d camera
+    d_cam = StructureCamera()
+    d_cam.depth_correction = False
+    d_cam.infrared_auto_exposure = True
+    d_cam.gamma_correction = False
+    d_cam.calibration_mode = d_cam.SC_CALIBRATION_ONESHOT
+    d_cam.depth_range = d_cam.SC_DEPTH_RANGE_VERY_SHORT
+    d_cam.depth_resolution = d_cam.SC_RESOLUTION_VGA
+    d_cam.start()
+
+    # setup rgb camera
+    rgb_cam = cv2.VideoCapture(1)
+
+    while True:
+        # read depth
+        depth_frame = d_cam.last_depth_frame()
+        depth_frame = clip_and_fill(depth_frame, 2e2, 10e2, 0)
+        depth_frame = depth_frame / 1e3  # milimeter to meter
+        in_depth = depth_frame[:, :, None]
+        depth_frame = normalize_minmax(depth_frame, 0.3, 1.0)
+        depth_frame = (depth_frame*255).astype(np.uint8)
+        depth_frame = cv2.cvtColor(depth_frame, cv2.COLOR_GRAY2RGB)
+        pil_depth = PIL.Image.fromarray(depth_frame)
+
+        # read rgb
+        ret_rgb, bgr_image = rgb_cam.read()
+
+        if h is not None:
+            height, width = depth_frame.shape[:2]
+            bgr_image = cv2.warpPerspective(bgr_image, h, (1216, 912))
+            bgr_image = cv2.resize(bgr_image, (width, height))
+
+        rgb_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
+        in_rgb = rgb_image.astype(np.float32) / 255.0
+        pil_rgb = PIL.Image.fromarray(rgb_image)
+
+
+
+        # Detect objects
+        pred_idx = classify_rgbd(in_rgb, in_depth, transform_rgb, transform_d, model)
+        # pred_idx = 0
+        label = clasess[pred_idx]
+
+        # draw
+        draw_text(pil_rgb, label, font_size=40)
+        draw_receptive_field(pil_rgb)
+        draw_receptive_field(pil_depth)
+        annotated = np.array(pil_rgb)
+        np_depth = np.array(pil_depth)
+
+        # RGB -> BGR to save image to video
+        annotated = annotated[..., ::-1]
+
+        # cv2.imshow('rgb_frame', bgr_frame)
+        cv2.imshow('rgb_frame', annotated)
+        cv2.imshow('d_frame', np_depth)
+
+        key = cv2.waitKey(5)
+        if key > 0:
+            cur_infrared_gain = d_cam.infrared_gain
+            cur_infrared_exposure = d_cam.infrared_exposure
+            if key == ord('0'):
+                d_cam.infrared_gain = 0
+            if key == ord('1'):
+                d_cam.infrared_gain = 1
+            if key == ord('2'):
+                d_cam.infrared_gain = 2
+            if key == ord('3'):
+                d_cam.infrared_gain = 3
+            if key == ord('q'):
+                d_cam.infrared_exposure = cur_infrared_exposure - 0.001
+            if key == ord('w'):
+                d_cam.infrared_exposure = cur_infrared_exposure + 0.001
+            if key == 27:  # Esc
+                break
+
+            print(f'exposure={d_cam.infrared_gain} gain={d_cam.infrared_exposure}')
+
+    cv2.destroyAllWindows()
+    d_cam.stop()
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -246,5 +370,7 @@ if __name__ == "__main__":
     args = parse_args()
     if args['mode'] == 'rgb':
         classify_rgb_camera(args['ckpt_root'])
+    elif args['mode'] == 'rgbd':
+        classify_rgbd_camera(args['ckpt_root'], np.load('./data/rgb2infrared.npy'))
     else:
         classify_depth_camera(args['ckpt_root'])

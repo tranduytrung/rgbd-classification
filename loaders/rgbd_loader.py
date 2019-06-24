@@ -23,10 +23,11 @@ class RGBDLoader:
             torchvision.transforms.Normalize(mean=[0.575], std=[0.425]),
             augmentation.DepthUniformNoise(p=0.01, minmax=-1),
         ])
-        if mode == 'train':
-            self.crop_resize = augmentation.CropAndResize((224,224), scale=(0.4, 1.0))
-        else:
-            self.crop_resize = augmentation.CenterCrop((224,224))
+        self.crop_resize = augmentation.CropAndResize((224,224), scale=(0.4, 1.0))
+        # if mode == 'train':
+        #     self.crop_resize = augmentation.CropAndResize((224,224), scale=(0.4, 1.0))
+        # else:
+        #     self.crop_resize = augmentation.CenterCrop((224,224))
 
     def __call__(self, rgb_path, d_path):
         # load rgb
@@ -49,13 +50,9 @@ class RGBDLoader:
         depth_file.close()
 
         # transform
-        # concat for crop
-        np_rgbd = np.concatenate((np_rgb, np_d), axis=2)
-        # crop_size
-        np_cr = self.crop_resize(np_rgbd)
-        # split back for transform
-        np_rgb = np_cr[..., :3]
-        np_d = np_cr[..., 3:]
+        # crop saperately, so the depth and rgb does not match
+        np_rgb = self.crop_resize(np_rgb)
+        np_d = self.crop_resize(np_d)
         # blur
         np_rgb = self.blur_rgb(np_rgb)
         # to tensor
