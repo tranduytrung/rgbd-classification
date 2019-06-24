@@ -30,6 +30,12 @@ def draw_receptive_field(image, size=224, outline=(255, 0, 0)):
     right_bottom = left_top + size
     draw.rectangle([*left_top, *right_bottom], outline=outline, width=2)
 
+def draw_rect(image, box=np.array([0, 0, 224, 224], np.int), outline=(255, 0, 0)):
+    # context
+    draw = PIL.ImageDraw.Draw(image)
+    # retangle
+    y, x, h, w = box
+    draw.rectangle([x, y, x + w, y + h], outline=outline, width=2)
 
 def init_rgb_classifier(ckpt_root):
     # transform
@@ -67,6 +73,7 @@ def classify(single_in, model, transform):
 
     return preds.item()
 
+
 def classify_rgbd(rgb_in, d_in, transform_rgb, transform_d, model):
     tensor_rgb = transform_rgb(rgb_in)
     tensor_d = transform_d(d_in)
@@ -75,6 +82,7 @@ def classify_rgbd(rgb_in, d_in, transform_rgb, transform_d, model):
     _, preds = torch.max(outputs, 1)
 
     return preds.item()
+
 
 def classify_rgb_camera(ckpt_root):
     import cv2
@@ -231,10 +239,11 @@ def classify_depth_camera(ckpt_root):
     cv2.destroyAllWindows()
     sc.stop()
 
+
 def init_rgbd_classifier(ckpt_root):
     # transform
     transform_d = torchvision.transforms.Compose([
-        augmentation.CenterCrop((224, 224)),
+        # augmentation.CenterCrop((224, 224)),
         augmentation.Numpy2Tensor(),
         augmentation.Clamp((0.15, 1.0)),
         torchvision.transforms.Normalize(mean=[0.575], std=[0.425])
@@ -242,10 +251,10 @@ def init_rgbd_classifier(ckpt_root):
 
     # transform rgb
     transform_rgb = torchvision.transforms.Compose([
-        augmentation.CenterCrop((224, 224)),
+        # augmentation.CenterCrop((224, 224)),
         augmentation.Numpy2Tensor(),
         torchvision.transforms.Normalize(mean=[0.5, 0.5, 0.5],
-                                            std=[0.5, 0.5, 0.5])
+                                         std=[0.5, 0.5, 0.5])
     ])
 
     # read classes name
@@ -266,62 +275,65 @@ def init_rgbd_classifier(ckpt_root):
 
     return model, transform_rgb, transform_d, clasess
 
-def classify_rgbd_camera(ckpt_root, h=None):
-    from structure import StructureCamera
+
+def classify_rgbd_camera(ckpt_root, rgb_box, d_box):
+    from occipital import StructureCamera
     import cv2
+    from augmentation.functional import crop, resize
 
     # init
-    model, transform_rgb, transform_d, clasess = init_rgbd_classifier(ckpt_root)
+    model, transform_rgb, transform_d, clasess = init_rgbd_classifier(
+        ckpt_root)
 
     # setup d camera
     d_cam = StructureCamera()
     d_cam.depth_correction = False
     d_cam.infrared_auto_exposure = True
-    d_cam.gamma_correction = False
+    d_cam.gamma_correction = True
     d_cam.calibration_mode = d_cam.SC_CALIBRATION_ONESHOT
     d_cam.depth_range = d_cam.SC_DEPTH_RANGE_VERY_SHORT
     d_cam.depth_resolution = d_cam.SC_RESOLUTION_VGA
     d_cam.start()
+    # d_box = np.array([0, 0, 224, 224], np.int)
 
     # setup rgb camera
-    rgb_cam = cv2.VideoCapture(1)
+    rgb_cam = cv2.VideoCapture(0)
+    # rgb_box = np.array([0, 0, 224, 224], np.int)
 
+    # mode
+    cur_box = rgb_box
     while True:
         # read depth
-        depth_frame = d_cam.last_depth_frame()
-        depth_frame = clip_and_fill(depth_frame, 2e2, 10e2, 0)
-        depth_frame = depth_frame / 1e3  # milimeter to meter
-        in_depth = depth_frame[:, :, None]
-        depth_frame = normalize_minmax(depth_frame, 0.3, 1.0)
-        depth_frame = (depth_frame*255).astype(np.uint8)
-        depth_frame = cv2.cvtColor(depth_frame, cv2.COLOR_GRAY2RGB)
-        pil_depth = PIL.Image.fromarray(depth_frame)
+        d_frame = d_cam.last_depth_frame()
+        d_frame = clip_and_fill(d_frame, 2e2, 10e2, 0)
+        d_frame = d_frame / 1e3  # milimeter to meter
+        in_d = d_frame[:, :, None]
+        d_frame = utils.bytescaling(d_frame)
+        d_frame = cv2.cvtColor(d_frame, cv2.COLOR_GRAY2RGB)
+        pil_d = PIL.Image.fromarray(d_frame)
 
         # read rgb
         ret_rgb, bgr_image = rgb_cam.read()
-
-        if h is not None:
-            height, width = depth_frame.shape[:2]
-            bgr_image = cv2.warpPerspective(bgr_image, h, (1216, 912))
-            bgr_image = cv2.resize(bgr_image, (width, height))
-
+        if not ret_rgb:
+            continue
         rgb_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
         in_rgb = rgb_image.astype(np.float32) / 255.0
         pil_rgb = PIL.Image.fromarray(rgb_image)
 
-
+        # crop and resize
+        in_rgb = resize(crop(in_rgb, *rgb_box), (224,224))
+        in_d = resize(crop(in_d, *d_box), (224,224))
 
         # Detect objects
-        pred_idx = classify_rgbd(in_rgb, in_depth, transform_rgb, transform_d, model)
-        # pred_idx = 0
+        pred_idx = classify_rgbd(in_rgb, in_d, transform_rgb, transform_d, model)
         label = clasess[pred_idx]
 
         # draw
         draw_text(pil_rgb, label, font_size=40)
-        draw_receptive_field(pil_rgb)
-        draw_receptive_field(pil_depth)
+        draw_rect(pil_rgb, rgb_box)
+        draw_rect(pil_d, d_box)
         annotated = np.array(pil_rgb)
-        np_depth = np.array(pil_depth)
+        np_depth = np.array(pil_d)
 
         # RGB -> BGR to save image to video
         annotated = annotated[..., ::-1]
@@ -332,27 +344,46 @@ def classify_rgbd_camera(ckpt_root, h=None):
 
         key = cv2.waitKey(5)
         if key > 0:
-            cur_infrared_gain = d_cam.infrared_gain
-            cur_infrared_exposure = d_cam.infrared_exposure
-            if key == ord('0'):
+            if key == ord('`'):
                 d_cam.infrared_gain = 0
-            if key == ord('1'):
+            elif key == ord('1'):
                 d_cam.infrared_gain = 1
-            if key == ord('2'):
+            elif key == ord('2'):
                 d_cam.infrared_gain = 2
-            if key == ord('3'):
+            elif key == ord('3'):
                 d_cam.infrared_gain = 3
-            if key == ord('q'):
-                d_cam.infrared_exposure = cur_infrared_exposure - 0.001
-            if key == ord('w'):
-                d_cam.infrared_exposure = cur_infrared_exposure + 0.001
-            if key == 27:  # Esc
+            elif key == ord('-'):
+                d_cam.infrared_exposure = d_cam.infrared_exposure - 0.001
+            elif key == ord('='):
+                d_cam.infrared_exposure = d_cam.infrared_exposure + 0.001
+            elif key == ord('r'):
+                cur_box = rgb_box
+            elif key == ord('f'):
+                cur_box = d_box
+            elif key == ord('w'):
+                cur_box[0] -= 1
+            elif key == ord('s'):
+                cur_box[0] += 1
+            elif key == ord('d'):
+                cur_box[1] += 1
+            elif key == ord('a'):
+                cur_box[1] -= 1
+            elif key == ord('q'):
+                cur_box[2] -= 1
+                cur_box[3] -= 1
+            elif key == ord('e'):
+                cur_box[2] += 1
+                cur_box[3] += 1
+            elif key == 27:  # Esc
                 break
 
-            print(f'exposure={d_cam.infrared_gain} gain={d_cam.infrared_exposure}')
+            # print(f'exposure={d_cam.infrared_gain} gain={d_cam.infrared_exposure}')
 
     cv2.destroyAllWindows()
     d_cam.stop()
+
+    return rgb_box, d_box
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -365,12 +396,22 @@ def parse_args():
         'ckpt_root': args.path
     }
 
+def save_cropresize(rgb_box, d_box):
+    np.savez('cropresize.npz', rgb=rgb_box, d=d_box)
+
+def load_cropresize():
+    if not os.path.isfile('cropresize.npz'):
+        return np.array([0, 0, 224, 224], dtype=np.int), np.array([0, 0, 224, 224], dtype=np.int)
+    data = np.load('cropresize.npz')
+    return data['rgb'], data['d']
 
 if __name__ == "__main__":
     args = parse_args()
     if args['mode'] == 'rgb':
         classify_rgb_camera(args['ckpt_root'])
     elif args['mode'] == 'rgbd':
-        classify_rgbd_camera(args['ckpt_root'], np.load('./data/rgb2infrared.npy'))
+        rgb_box, d_box = load_cropresize()
+        rgb_box, d_box = classify_rgbd_camera(args['ckpt_root'], rgb_box, d_box)
+        save_cropresize(rgb_box, d_box)
     else:
         classify_depth_camera(args['ckpt_root'])
